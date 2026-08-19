@@ -1,0 +1,3 @@
+# Listas de alunos contêm dados pessoais reais e não devem ir para o
+# repositório público. Rode esses arquivos direto no SQL Editor do Supabase.
+alunos_*.sql
