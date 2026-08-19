@@ -466,6 +466,16 @@
     </div>
   </section>
 
+  <section class="screen" id="screen-attempted" hidden>
+    <div class="result-wrap">
+      <div class="result-card">
+        <div class="result-badge danger">!</div>
+        <h1>Avaliação já realizada</h1>
+        <p class="lede">Este navegador já foi usado para realizar esta avaliação. Cada aluno tem direito a apenas uma tentativa, então não é possível iniciar novamente por aqui. Se você acredita que isso é um engano, procure o professor.</p>
+      </div>
+    </div>
+  </section>
+
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -899,6 +909,17 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 (function(){
   "use strict";
 
+  var ATTEMPT_STORAGE_KEY = "prova_cd_v1_attempted";
+
+  function hasAttempted(){
+    try{ return window.localStorage.getItem(ATTEMPT_STORAGE_KEY) === "1"; }
+    catch(e){ return false; }
+  }
+  function markAttempted(){
+    try{ window.localStorage.setItem(ATTEMPT_STORAGE_KEY, "1"); }
+    catch(e){}
+  }
+
   var QUESTIONS = [
     { id:1, type:"mc", text:"O que melhor define Ciência de Dados?", options:[
       "Uma área multidisciplinar que combina estatística, programação e conhecimento de domínio para extrair informações úteis de dados",
@@ -944,7 +965,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   function $(id){ return document.getElementById(id); }
 
   function showScreen(name){
-    ["screen-start","screen-exam","screen-blocked","screen-done"].forEach(function(id){
+    ["screen-start","screen-exam","screen-blocked","screen-done","screen-attempted"].forEach(function(id){
       var el = $(id);
       if(!el) return;
       el.hidden = (id !== "screen-" + name);
@@ -1384,8 +1405,13 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   }
 
   function startExam(){
+    if(hasAttempted()){
+      showScreen("attempted");
+      return;
+    }
     var data = validateStart();
     if(!data) return;
+    markAttempted();
     state.nome = data.nome;
     state.turma = data.turma;
     $("hud-name").textContent = state.nome;
@@ -1427,6 +1453,10 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     $("btn-redownload-done").addEventListener("click", function(){
       downloadPdf(false, "download-status-done");
     });
+
+    if(hasAttempted()){
+      showScreen("attempted");
+    }
 
     $("btn-return-fullscreen").addEventListener("click", function(){
       var root = document.documentElement;
