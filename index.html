@@ -925,6 +925,23 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   }
 
   /**
+   * Checks the student against the teacher's roster (alunos_permitidos)
+   * via a security-definer RPC, so the client never gets read access to
+   * the full list — only a true/false answer for this nome+turma pair.
+   */
+  function checkAlunoPermitido(nome, turma){
+    if(!supabaseClient){
+      return Promise.resolve({ ok:false, reason:"unavailable" });
+    }
+    return supabaseClient.rpc("is_aluno_permitido", { p_nome:nome, p_turma:turma }).then(function(res){
+      if(res.error) return { ok:false, reason:"error", detail:res.error.message };
+      return res.data === true ? { ok:true } : { ok:false, reason:"not_listed" };
+    }).catch(function(err){
+      return { ok:false, reason:"error", detail: err && err.message };
+    });
+  }
+
+  /**
    * Registers the attempt server-side. The unique constraint on
    * email_key is the actual enforcement point: a second attempt with
    * the same normalized e-mail fails on insert regardless of which
@@ -1442,6 +1459,26 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return { nome:nome, turma:turma, email:email };
   }
 
+  function proceedToExam(data){
+    state.nome = data.nome;
+    state.turma = data.turma;
+    state.email = data.email;
+    $("hud-name").textContent = state.nome;
+    $("hud-turma").textContent = state.turma;
+
+    var root = document.documentElement;
+    var fsPromise = root.requestFullscreen ? root.requestFullscreen().catch(function(){}) : Promise.resolve();
+    fsPromise.then(function(){
+      state.startedAt = new Date();
+      showScreen("exam");
+      renderQuestions();
+      updateProgress();
+      renderStrikes();
+      attachMonitoring();
+      startTimer();
+    });
+  }
+
   function startExam(){
     var data = validateStart();
     if(!data) return;
@@ -1452,36 +1489,33 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     btn.textContent = "Verificando...";
     err.textContent = "";
 
-    registerAttempt(data.nome, data.turma, data.email).then(function(result){
-      if(result.ok){
-        state.nome = data.nome;
-        state.turma = data.turma;
-        state.email = data.email;
-        $("hud-name").textContent = state.nome;
-        $("hud-turma").textContent = state.turma;
-
-        var root = document.documentElement;
-        var fsPromise = root.requestFullscreen ? root.requestFullscreen().catch(function(){}) : Promise.resolve();
-        fsPromise.then(function(){
-          state.startedAt = new Date();
-          showScreen("exam");
-          renderQuestions();
-          updateProgress();
-          renderStrikes();
-          attachMonitoring();
-          startTimer();
-        });
+    checkAlunoPermitido(data.nome, data.turma).then(function(allowed){
+      if(!allowed.ok){
+        btn.disabled = false;
+        btn.textContent = "Iniciar avaliação";
+        if(allowed.reason === "not_listed"){
+          err.textContent = "Nome e turma não encontrados na lista de alunos autorizados. Confira se digitou exatamente como no cadastro (ou procure o professor).";
+        } else {
+          err.textContent = "Não foi possível verificar sua autorização agora (conexão instável). Tente novamente.";
+        }
         return;
       }
 
-      btn.disabled = false;
-      btn.textContent = "Iniciar avaliação";
+      registerAttempt(data.nome, data.turma, data.email).then(function(result){
+        if(result.ok){
+          proceedToExam(data);
+          return;
+        }
 
-      if(result.reason === "duplicate"){
-        showScreen("attempted");
-      } else {
-        err.textContent = "Não foi possível verificar sua tentativa agora (conexão instável). Tente novamente.";
-      }
+        btn.disabled = false;
+        btn.textContent = "Iniciar avaliação";
+
+        if(result.reason === "duplicate"){
+          showScreen("attempted");
+        } else {
+          err.textContent = "Não foi possível verificar sua tentativa agora (conexão instável). Tente novamente.";
+        }
+      });
     });
   }
 
