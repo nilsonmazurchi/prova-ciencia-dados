@@ -920,8 +920,14 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
     : null;
 
-  function normalizeEmail(email){
-    return (email || "").trim().toLowerCase();
+  function normalizeKey(nome, turma){
+    var diacritics = new RegExp("[̀-ͯ]", "g");
+    function norm(s){
+      return (s || "")
+        .normalize("NFD").replace(diacritics, "")
+        .toLowerCase().trim().replace(/\s+/g, " ");
+    }
+    return norm(nome) + "|" + norm(turma);
   }
 
   /**
@@ -943,16 +949,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
   /**
    * Registers the attempt server-side. The unique constraint on
-   * email_key is the actual enforcement point: a second attempt with
-   * the same normalized e-mail fails on insert regardless of which
-   * browser/device it comes from.
+   * nome_turma_key is the actual enforcement point: a second attempt
+   * with the same normalized nome+turma fails on insert regardless of
+   * which browser/device (or e-mail) it comes from.
    */
   function registerAttempt(nome, turma, email){
     if(!supabaseClient){
       return Promise.resolve({ ok:false, reason:"unavailable" });
     }
     return supabaseClient.from("tentativas").insert({
-      email_key: normalizeEmail(email),
+      nome_turma_key: normalizeKey(nome, turma),
       nome: nome,
       turma: turma,
       email: email
