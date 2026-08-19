@@ -2,6 +2,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Literata:opsz,wght@7..72,500;7..72,600;7..72,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   :root{
     --bg:#eef1f5;
@@ -471,7 +472,7 @@
       <div class="result-card">
         <div class="result-badge danger">!</div>
         <h1>Avaliação já realizada</h1>
-        <p class="lede">Este navegador já foi usado para realizar esta avaliação. Cada aluno tem direito a apenas uma tentativa, então não é possível iniciar novamente por aqui. Se você acredita que isso é um engano, procure o professor.</p>
+        <p class="lede">Já existe uma tentativa registrada para este nome e turma. Cada aluno tem direito a apenas uma tentativa, então não é possível iniciar novamente — inclusive em outro navegador ou dispositivo. Se você acredita que isso é um engano, procure o professor.</p>
       </div>
     </div>
   </section>
@@ -909,15 +910,43 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 (function(){
   "use strict";
 
-  var ATTEMPT_STORAGE_KEY = "prova_cd_v1_attempted";
+  var SUPABASE_URL = "https://twkinhyxufpwzczpiiwt.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_8iWm-rh8axIMWKTrGQycqw_ZEgduQAN";
+  var supabaseClient = (window.supabase && window.supabase.createClient)
+    ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    : null;
 
-  function hasAttempted(){
-    try{ return window.localStorage.getItem(ATTEMPT_STORAGE_KEY) === "1"; }
-    catch(e){ return false; }
+  function normalizeKey(nome, turma){
+    var diacritics = new RegExp("[̀-ͯ]", "g");
+    function norm(s){
+      return (s || "")
+        .normalize("NFD").replace(diacritics, "")
+        .toLowerCase().trim().replace(/\s+/g, " ");
+    }
+    return norm(nome) + "|" + norm(turma);
   }
-  function markAttempted(){
-    try{ window.localStorage.setItem(ATTEMPT_STORAGE_KEY, "1"); }
-    catch(e){}
+
+  /**
+   * Registers the attempt server-side. The unique constraint on
+   * nome_turma_key is the actual enforcement point: a second attempt
+   * with the same normalized nome+turma fails on insert regardless of
+   * which browser/device it comes from.
+   */
+  function registerAttempt(nome, turma){
+    if(!supabaseClient){
+      return Promise.resolve({ ok:false, reason:"unavailable" });
+    }
+    return supabaseClient.from("tentativas").insert({
+      nome_turma_key: normalizeKey(nome, turma),
+      nome: nome,
+      turma: turma
+    }).then(function(res){
+      if(!res.error) return { ok:true };
+      if(res.error.code === "23505") return { ok:false, reason:"duplicate" };
+      return { ok:false, reason:"error", detail:res.error.message };
+    }).catch(function(err){
+      return { ok:false, reason:"error", detail: err && err.message };
+    });
   }
 
   var QUESTIONS = [
@@ -1405,29 +1434,44 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   }
 
   function startExam(){
-    if(hasAttempted()){
-      showScreen("attempted");
-      return;
-    }
     var data = validateStart();
     if(!data) return;
-    markAttempted();
-    state.nome = data.nome;
-    state.turma = data.turma;
-    $("hud-name").textContent = state.nome;
-    $("hud-turma").textContent = state.turma;
 
-    var root = document.documentElement;
-    var fsPromise = root.requestFullscreen ? root.requestFullscreen().catch(function(){}) : Promise.resolve();
+    var btn = $("btn-start");
+    var err = $("start-error");
+    btn.disabled = true;
+    btn.textContent = "Verificando...";
+    err.textContent = "";
 
-    fsPromise.then(function(){
-      state.startedAt = new Date();
-      showScreen("exam");
-      renderQuestions();
-      updateProgress();
-      renderStrikes();
-      attachMonitoring();
-      startTimer();
+    registerAttempt(data.nome, data.turma).then(function(result){
+      if(result.ok){
+        state.nome = data.nome;
+        state.turma = data.turma;
+        $("hud-name").textContent = state.nome;
+        $("hud-turma").textContent = state.turma;
+
+        var root = document.documentElement;
+        var fsPromise = root.requestFullscreen ? root.requestFullscreen().catch(function(){}) : Promise.resolve();
+        fsPromise.then(function(){
+          state.startedAt = new Date();
+          showScreen("exam");
+          renderQuestions();
+          updateProgress();
+          renderStrikes();
+          attachMonitoring();
+          startTimer();
+        });
+        return;
+      }
+
+      btn.disabled = false;
+      btn.textContent = "Iniciar avaliação";
+
+      if(result.reason === "duplicate"){
+        showScreen("attempted");
+      } else {
+        err.textContent = "Não foi possível verificar sua tentativa agora (conexão instável). Tente novamente.";
+      }
     });
   }
 
@@ -1453,10 +1497,6 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     $("btn-redownload-done").addEventListener("click", function(){
       downloadPdf(false, "download-status-done");
     });
-
-    if(hasAttempted()){
-      showScreen("attempted");
-    }
 
     $("btn-return-fullscreen").addEventListener("click", function(){
       var root = document.documentElement;
