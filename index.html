@@ -990,7 +990,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
    * the record survives an abrupt tab close mid-exam.
    */
   function syncAttemptState(extra){
-    if(!supabaseClient || !state.attemptId) return;
+    if(!state.attemptId) return;
     var payload = {
       violations_count: state.violations.length,
       violations: state.violations.map(function(v){
@@ -998,7 +998,21 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       })
     };
     if(extra) for(var k in extra) payload[k] = extra[k];
-    supabaseClient.from("tentativas").update(payload).eq("id", state.attemptId).then(function(){}).catch(function(){});
+    // Raw fetch with keepalive instead of the supabase-js client: when a
+    // violation happens right as the tab is closing, a normal in-flight
+    // request gets cancelled by the browser as the page unloads.
+    // keepalive tells the browser to deliver it anyway.
+    fetch(SUPABASE_URL + "/rest/v1/tentativas?id=eq." + encodeURIComponent(state.attemptId), {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+        "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(payload),
+      keepalive: true
+    }).catch(function(){});
   }
 
   var QUESTIONS = [
