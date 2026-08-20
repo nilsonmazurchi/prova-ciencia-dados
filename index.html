@@ -953,17 +953,35 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
    * with the same normalized nome+turma fails on insert regardless of
    * which browser/device (or e-mail) it comes from.
    */
+  function generateId(){
+    if(window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c){
+      var r = Math.random() * 16 | 0;
+      var v = c === "x" ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  /**
+   * The client generates its own id and sends it in the insert payload,
+   * instead of asking Supabase to return the inserted row afterward —
+   * reading it back would require a public SELECT policy on tentativas,
+   * which would expose every student's name/e-mail/violations to anyone
+   * calling the API. This way the table stays write-only for anon.
+   */
   function registerAttempt(nome, turma, email){
     if(!supabaseClient){
       return Promise.resolve({ ok:false, reason:"unavailable" });
     }
+    var id = generateId();
     return supabaseClient.from("tentativas").insert({
+      id: id,
       nome_turma_key: normalizeKey(nome, turma),
       nome: nome,
       turma: turma,
       email: email
-    }).select("id").single().then(function(res){
-      if(!res.error) return { ok:true, id: res.data && res.data.id };
+    }).then(function(res){
+      if(!res.error) return { ok:true, id: id };
       if(res.error.code === "23505") return { ok:false, reason:"duplicate" };
       return { ok:false, reason:"error", detail:res.error.message };
     }).catch(function(err){
