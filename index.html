@@ -1184,10 +1184,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
   }
 
+  var VIOLATION_DEBOUNCE_MS = 4000;
+
   function registerViolation(type, label){
     if(state.blocked || state.finished) return;
     var now = Date.now();
-    if(now - lastViolationAt < 700) return;
+    if(now - lastViolationAt < VIOLATION_DEBOUNCE_MS) return;
     lastViolationAt = now;
     state.violations.push({ type:type, label:label, at:new Date() });
     renderStrikes();
@@ -1257,13 +1259,6 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       registerViolation("devtools", "Tentou abrir ferramentas de desenvolvedor");
     }
   }
-  function onBeforeUnload(e){
-    if(!state.finished && !state.blocked){
-      e.preventDefault();
-      e.returnValue = "";
-    }
-  }
-
   function attachMonitoring(){
     document.addEventListener("visibilitychange", onVisibilityChange);
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -1272,7 +1267,6 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     document.addEventListener("paste", onCopyCutPaste);
     document.addEventListener("contextmenu", onContextMenu);
     document.addEventListener("keydown", onKeyDown);
-    window.addEventListener("beforeunload", onBeforeUnload);
   }
 
   /* ---------- pdf generation (auto-download, no dialog) ---------- */
