@@ -1001,7 +1001,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
    * the record survives an abrupt tab close mid-exam.
    */
   function syncAttemptState(extra){
-    if(!state.attemptId) return;
+    console.log("[prova] syncAttemptState chamado. attemptId =", state.attemptId, "supabaseClient =", !!supabaseClient);
+    if(!state.attemptId){
+      console.warn("[prova] syncAttemptState abortado: attemptId ausente.");
+      return;
+    }
     var payload = {
       violations_count: state.violations.length,
       violations: state.violations.map(function(v){
@@ -1009,11 +1013,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       })
     };
     if(extra) for(var k in extra) payload[k] = extra[k];
-    if(!supabaseClient) return;
+    if(!supabaseClient){
+      console.warn("[prova] syncAttemptState abortado: supabaseClient ausente.");
+      return;
+    }
+    console.log("[prova] Enviando update para tentativas:", payload);
     supabaseClient.from("tentativas").update(payload).eq("id", state.attemptId).then(function(res){
-      if(res && res.error) console.error("Falha ao salvar tentativa:", res.error);
+      if(res && res.error) console.error("[prova] Falha ao salvar tentativa:", res.error);
+      else console.log("[prova] Tentativa salva com sucesso.", res);
     }).catch(function(err){
-      console.error("Falha ao salvar tentativa:", err);
+      console.error("[prova] Falha ao salvar tentativa (exceção):", err);
     });
   }
 
@@ -1556,6 +1565,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       }
 
       registerAttempt(data.nome, data.turma, data.email).then(function(result){
+        console.log("[prova] registerAttempt resultado:", result);
         if(result.ok){
           proceedToExam(data, result);
           return;
