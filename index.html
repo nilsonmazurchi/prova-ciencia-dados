@@ -1017,10 +1017,15 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       console.warn("[prova] syncAttemptState abortado: supabaseClient ausente.");
       return;
     }
-    console.log("[prova] Enviando update para tentativas:", payload);
-    supabaseClient.from("tentativas").update(payload).eq("id", state.attemptId).then(function(res){
-      if(res && res.error) console.error("[prova] Falha ao salvar tentativa:", res.error);
-      else console.log("[prova] Tentativa salva com sucesso.", res);
+    console.log("[prova] Enviando update para tentativas, id =", JSON.stringify(state.attemptId), "payload =", payload);
+    supabaseClient.from("tentativas").update(payload, { count: "exact" }).eq("id", state.attemptId).then(function(res){
+      if(res && res.error){
+        console.error("[prova] Falha ao salvar tentativa:", res.error);
+      } else if(res && res.count === 0){
+        console.error("[prova] Update executado mas NENHUMA linha foi encontrada com id =", state.attemptId, "— resultado completo:", res);
+      } else {
+        console.log("[prova] Tentativa salva com sucesso. Linhas afetadas:", res && res.count, res);
+      }
     }).catch(function(err){
       console.error("[prova] Falha ao salvar tentativa (exceção):", err);
     });
