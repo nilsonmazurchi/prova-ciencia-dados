@@ -986,6 +986,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
           violations:(data.violations || []).map(function(v){
             return { type:v.type, label:v.label, at:new Date(v.at) };
           }),
+          closeEvents:(data.close_events || []).map(function(t){ return new Date(t); }),
           startedAt: data.started_at ? new Date(data.started_at) : null
         };
       }
@@ -1012,13 +1013,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       p_violations: state.violations.map(function(v){
         return { type:v.type, label:v.label, at:v.at.toISOString() };
       }),
+      p_close_events: state.closeEvents.map(function(d){ return d.toISOString(); }),
       p_status: (extra && extra.status) || null,
       p_ended_at: (extra && extra.ended_at) || null
     };
-    console.log("[prova] Chamando sincronizar_tentativa:", params);
     supabaseClient.rpc("sincronizar_tentativa", params).then(function(res){
       if(res && res.error) console.error("[prova] Falha ao sincronizar tentativa:", res.error);
-      else console.log("[prova] Tentativa sincronizada com sucesso.", res);
     }).catch(function(err){
       console.error("[prova] Falha ao sincronizar tentativa (exceção):", err);
     });
@@ -1057,6 +1057,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     startedAt:null, endedAt:null,
     answers:new Array(QUESTIONS.length).fill(""),
     violations:[],
+    closeEvents:[],
     blocked:false,
     finished:false,
     fullscreenEngaged:false
@@ -1224,8 +1225,31 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     }
   }
 
+  var CLOSE_EVENT_WINDOW_MS = 120000; // 2 minutos
+  var CLOSE_EVENT_THRESHOLD = 3;
+
+  /**
+   * Closing/hiding the tab is logged but doesn't spend one of the 3
+   * official attempts by itself — a single accidental close (crash,
+   * misclick) shouldn't cost the student. Only a pattern of 3 closes
+   * within a short window escalates into one real violation.
+   */
+  function registerCloseEvent(){
+    if(state.blocked || state.finished) return;
+    state.closeEvents.push(new Date());
+    syncAttemptState();
+    var now = Date.now();
+    var recent = state.closeEvents.filter(function(d){ return now - d.getTime() <= CLOSE_EVENT_WINDOW_MS; });
+    if(recent.length >= CLOSE_EVENT_THRESHOLD){
+      state.closeEvents = [];
+      registerViolation("tab", "Fechou ou saiu da aba " + CLOSE_EVENT_THRESHOLD + " vezes em menos de 2 minutos");
+    } else {
+      showToast("Saída da aba registrada (" + recent.length + " de " + CLOSE_EVENT_THRESHOLD + " antes de contar como tentativa)");
+    }
+  }
+
   function onVisibilityChange(){
-    if(document.hidden) registerViolation("tab", "Saiu da aba ou minimizou a janela");
+    if(document.hidden) registerCloseEvent();
   }
   function onFullscreenChange(){
     if(document.fullscreenElement){
@@ -1521,6 +1545,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     state.email = data.email;
     state.attemptId = result.id;
     state.violations = result.violations || [];
+    state.closeEvents = result.closeEvents || [];
     $("hud-name").textContent = state.nome;
     $("hud-turma").textContent = state.turma;
 

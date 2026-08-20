@@ -16,7 +16,8 @@ create table public.tentativas (
   ended_at timestamptz,
   status text not null default 'em_andamento',
   violations_count integer not null default 0,
-  violations jsonb not null default '[]'::jsonb
+  violations jsonb not null default '[]'::jsonb,
+  close_events jsonb not null default '[]'::jsonb
 );
 
 alter table public.tentativas enable row level security;
@@ -106,6 +107,7 @@ begin
       'action', 'resume',
       'id', v_row.id,
       'violations', v_row.violations,
+      'close_events', v_row.close_events,
       'started_at', v_row.started_at
     );
   end if;
@@ -124,10 +126,15 @@ grant execute on function public.iniciar_ou_retomar_tentativa(text, text, text) 
 -- tentativa de burla quanto para a finalização da prova.
 -- ---------------------------------------------------------------------
 
+-- Remove a versão anterior da função (assinatura antiga, sem close_events)
+-- para não deixar duas versões sobrepostas no banco.
+drop function if exists public.sincronizar_tentativa(uuid, integer, jsonb, text, timestamptz);
+
 create or replace function public.sincronizar_tentativa(
   p_id uuid,
   p_violations_count integer,
   p_violations jsonb,
+  p_close_events jsonb default null,
   p_status text default null,
   p_ended_at timestamptz default null
 )
@@ -139,12 +146,13 @@ as $$
   update public.tentativas
   set violations_count = p_violations_count,
       violations = p_violations,
+      close_events = coalesce(p_close_events, close_events),
       status = coalesce(p_status, status),
       ended_at = coalesce(p_ended_at, ended_at)
   where id = p_id;
 $$;
 
-grant execute on function public.sincronizar_tentativa(uuid, integer, jsonb, text, timestamptz) to anon;
+grant execute on function public.sincronizar_tentativa(uuid, integer, jsonb, jsonb, text, timestamptz) to anon;
 
 -- Depois de rodar este script, insira os alunos autorizados, por exemplo:
 -- insert into public.alunos_permitidos (nome_turma_key, nome, turma) values
