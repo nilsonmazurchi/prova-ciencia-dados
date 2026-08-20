@@ -12,7 +12,11 @@ create table public.tentativas (
   nome text not null,
   turma text not null,
   email text not null,
-  started_at timestamptz not null default now()
+  started_at timestamptz not null default now(),
+  ended_at timestamptz,
+  status text not null default 'em_andamento',
+  violations_count integer not null default 0,
+  violations jsonb not null default '[]'::jsonb
 );
 
 alter table public.tentativas enable row level security;
@@ -21,6 +25,19 @@ create policy "Permitir inserção pública de tentativas"
 on public.tentativas
 for insert
 to anon
+with check (true);
+
+-- Permite que o navegador do aluno atualize a própria linha (para registrar
+-- tentativas de fraude e o status final) usando o id devolvido no insert.
+-- Sem sistema de login não dá para restringir isso à "linha do próprio aluno"
+-- de forma criptograficamente segura — mas o id é um UUID aleatório que só
+-- o navegador do aluno recebe, então na prática só ele consegue atualizar
+-- a própria linha.
+create policy "Permitir atualização pública de tentativas"
+on public.tentativas
+for update
+to anon
+using (true)
 with check (true);
 
 -- ---------------------------------------------------------------------

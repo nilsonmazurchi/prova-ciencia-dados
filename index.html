@@ -962,13 +962,30 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       nome: nome,
       turma: turma,
       email: email
-    }).then(function(res){
-      if(!res.error) return { ok:true };
+    }).select("id").single().then(function(res){
+      if(!res.error) return { ok:true, id: res.data && res.data.id };
       if(res.error.code === "23505") return { ok:false, reason:"duplicate" };
       return { ok:false, reason:"error", detail:res.error.message };
     }).catch(function(err){
       return { ok:false, reason:"error", detail: err && err.message };
     });
+  }
+
+  /**
+   * Fire-and-forget sync of the current violations/status to Supabase,
+   * called right when each violation happens (not just at the end) so
+   * the record survives an abrupt tab close mid-exam.
+   */
+  function syncAttemptState(extra){
+    if(!supabaseClient || !state.attemptId) return;
+    var payload = {
+      violations_count: state.violations.length,
+      violations: state.violations.map(function(v){
+        return { type:v.type, label:v.label, at:v.at.toISOString() };
+      })
+    };
+    if(extra) for(var k in extra) payload[k] = extra[k];
+    supabaseClient.from("tentativas").update(payload).eq("id", state.attemptId).then(function(){}).catch(function(){});
   }
 
   var QUESTIONS = [
@@ -1000,7 +1017,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   ];
 
   var state = {
-    nome:"", turma:"", email:"",
+    nome:"", turma:"", email:"", attemptId:null,
     startedAt:null, endedAt:null,
     answers:new Array(QUESTIONS.length).fill(""),
     violations:[],
@@ -1161,6 +1178,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     lastViolationAt = now;
     state.violations.push({ type:type, label:label, at:new Date() });
     renderStrikes();
+    syncAttemptState();
     var count = state.violations.length;
     showToast("Tentativa " + count + " de 3 — " + label);
     if(count >= 3){
@@ -1420,6 +1438,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     state.blocked = true;
     state.endedAt = new Date();
     stopTimer();
+    syncAttemptState({ status:"bloqueada", ended_at: state.endedAt.toISOString() });
     if(document.fullscreenElement){
       document.exitFullscreen().catch(function(){});
     }
@@ -1433,6 +1452,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     state.finished = true;
     state.endedAt = new Date();
     stopTimer();
+    syncAttemptState({ status:"concluida", ended_at: state.endedAt.toISOString() });
     if(document.fullscreenElement){
       document.exitFullscreen().catch(function(){});
     }
@@ -1465,10 +1485,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return { nome:nome, turma:turma, email:email };
   }
 
-  function proceedToExam(data){
+  function proceedToExam(data, attemptId){
     state.nome = data.nome;
     state.turma = data.turma;
     state.email = data.email;
+    state.attemptId = attemptId;
     $("hud-name").textContent = state.nome;
     $("hud-turma").textContent = state.turma;
 
@@ -1509,7 +1530,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
       registerAttempt(data.nome, data.turma, data.email).then(function(result){
         if(result.ok){
-          proceedToExam(data);
+          proceedToExam(data, result.id);
           return;
         }
 
