@@ -21,11 +21,11 @@ create table public.tentativas (
 
 alter table public.tentativas enable row level security;
 
-create policy "Permitir inserção pública de tentativas"
-on public.tentativas
-for insert
-to anon
-with check (true);
+-- Não existe policy de insert direto: toda criação/retomada de tentativa
+-- passa pela função iniciar_ou_retomar_tentativa (definida mais abaixo),
+-- que decide se cria uma tentativa nova, retoma uma em andamento, ou
+-- bloqueia — sem isso, qualquer um poderia inserir linhas falsas sem
+-- passar pela checagem da lista de alunos autorizados.
 
 -- Permite que o navegador do aluno atualize a própria linha (para registrar
 -- tentativas de fraude e o status final) usando o id devolvido no insert.
@@ -79,6 +79,54 @@ as $$
 $$;
 
 grant execute on function public.is_aluno_permitido(text, text) to anon;
+
+-- ---------------------------------------------------------------------
+-- Iniciar ou retomar tentativa: fechar a aba não deve zerar as tentativas
+-- nem bloquear o aluno para sempre. Esta função decide, para um dado
+-- nome+turma:
+--   - "new"     -> nenhuma tentativa existia, cria uma nova (zerada).
+--   - "resume"  -> já existia uma tentativa em andamento (aba fechada no
+--                  meio da prova); devolve o id e as tentativas de burla
+--                  já registradas, para o navegador continuar de onde parou.
+--   - "blocked" -> a tentativa já foi concluída ou bloqueada de vez.
+-- ---------------------------------------------------------------------
+
+create or replace function public.iniciar_ou_retomar_tentativa(p_nome text, p_turma text, p_email text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_key text;
+  v_row public.tentativas;
+  v_new_id uuid;
+begin
+  v_key := normalize_text(p_nome) || '|' || normalize_text(p_turma);
+
+  select * into v_row from public.tentativas where nome_turma_key = v_key;
+
+  if not found then
+    v_new_id := gen_random_uuid();
+    insert into public.tentativas (id, nome_turma_key, nome, turma, email)
+    values (v_new_id, v_key, p_nome, p_turma, p_email);
+    return jsonb_build_object('action', 'new', 'id', v_new_id);
+  end if;
+
+  if v_row.status = 'em_andamento' and v_row.violations_count < 3 then
+    return jsonb_build_object(
+      'action', 'resume',
+      'id', v_row.id,
+      'violations', v_row.violations,
+      'started_at', v_row.started_at
+    );
+  end if;
+
+  return jsonb_build_object('action', 'blocked');
+end;
+$$;
+
+grant execute on function public.iniciar_ou_retomar_tentativa(text, text, text) to anon;
 
 -- Depois de rodar este script, insira os alunos autorizados, por exemplo:
 -- insert into public.alunos_permitidos (nome_turma_key, nome, turma) values

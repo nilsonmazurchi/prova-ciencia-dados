@@ -948,42 +948,37 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   }
 
   /**
-   * Registers the attempt server-side. The unique constraint on
-   * nome_turma_key is the actual enforcement point: a second attempt
-   * with the same normalized nome+turma fails on insert regardless of
-   * which browser/device (or e-mail) it comes from.
-   */
-  function generateId(){
-    if(window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
-    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c){
-      var r = Math.random() * 16 | 0;
-      var v = c === "x" ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-  }
-
-  /**
-   * The client generates its own id and sends it in the insert payload,
-   * instead of asking Supabase to return the inserted row afterward —
-   * reading it back would require a public SELECT policy on tentativas,
-   * which would expose every student's name/e-mail/violations to anyone
-   * calling the API. This way the table stays write-only for anon.
+   * Starts or resumes an attempt via a security-definer RPC (so the
+   * decision — new vs. resume vs. blocked — is made atomically server
+   * side, without needing a public SELECT policy on tentativas). Closing
+   * the tab mid-exam leaves the row as "em_andamento", so reopening
+   * resumes it (same id, same violations already logged) instead of
+   * being treated as a brand new attempt or a permanent block.
    */
   function registerAttempt(nome, turma, email){
     if(!supabaseClient){
       return Promise.resolve({ ok:false, reason:"unavailable" });
     }
-    var id = generateId();
-    return supabaseClient.from("tentativas").insert({
-      id: id,
-      nome_turma_key: normalizeKey(nome, turma),
-      nome: nome,
-      turma: turma,
-      email: email
+    return supabaseClient.rpc("iniciar_ou_retomar_tentativa", {
+      p_nome:nome, p_turma:turma, p_email:email
     }).then(function(res){
-      if(!res.error) return { ok:true, id: id };
-      if(res.error.code === "23505") return { ok:false, reason:"duplicate" };
-      return { ok:false, reason:"error", detail:res.error.message };
+      if(res.error) return { ok:false, reason:"error", detail:res.error.message };
+      var data = res.data || {};
+      if(data.action === "new"){
+        return { ok:true, id:data.id, resumed:false, violations:[], startedAt:null };
+      }
+      if(data.action === "resume"){
+        return {
+          ok:true,
+          id:data.id,
+          resumed:true,
+          violations:(data.violations || []).map(function(v){
+            return { type:v.type, label:v.label, at:new Date(v.at) };
+          }),
+          startedAt: data.started_at ? new Date(data.started_at) : null
+        };
+      }
+      return { ok:false, reason:"duplicate" };
     }).catch(function(err){
       return { ok:false, reason:"error", detail: err && err.message };
     });
@@ -1503,24 +1498,28 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     return { nome:nome, turma:turma, email:email };
   }
 
-  function proceedToExam(data, attemptId){
+  function proceedToExam(data, result){
     state.nome = data.nome;
     state.turma = data.turma;
     state.email = data.email;
-    state.attemptId = attemptId;
+    state.attemptId = result.id;
+    state.violations = result.violations || [];
     $("hud-name").textContent = state.nome;
     $("hud-turma").textContent = state.turma;
 
     var root = document.documentElement;
     var fsPromise = root.requestFullscreen ? root.requestFullscreen().catch(function(){}) : Promise.resolve();
     fsPromise.then(function(){
-      state.startedAt = new Date();
+      state.startedAt = result.startedAt || new Date();
       showScreen("exam");
       renderQuestions();
       updateProgress();
       renderStrikes();
       attachMonitoring();
       startTimer();
+      if(result.resumed){
+        showToast("Avaliação retomada — " + state.violations.length + " de 3 tentativas já registradas anteriormente.");
+      }
     });
   }
 
@@ -1548,7 +1547,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 
       registerAttempt(data.nome, data.turma, data.email).then(function(result){
         if(result.ok){
-          proceedToExam(data, result.id);
+          proceedToExam(data, result);
           return;
         }
 
