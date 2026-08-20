@@ -998,36 +998,29 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
   /**
    * Fire-and-forget sync of the current violations/status to Supabase,
    * called right when each violation happens (not just at the end) so
-   * the record survives an abrupt tab close mid-exam.
+   * the record survives an abrupt tab close mid-exam. Goes through the
+   * sincronizar_tentativa RPC (security definer) instead of a direct
+   * table update — a direct anon UPDATE silently matched zero rows in
+   * testing despite RLS looking correct, so writes are routed through
+   * functions the same way inserts already are.
    */
   function syncAttemptState(extra){
-    console.log("[prova] syncAttemptState chamado. attemptId =", state.attemptId, "supabaseClient =", !!supabaseClient);
-    if(!state.attemptId){
-      console.warn("[prova] syncAttemptState abortado: attemptId ausente.");
-      return;
-    }
-    var payload = {
-      violations_count: state.violations.length,
-      violations: state.violations.map(function(v){
+    if(!state.attemptId || !supabaseClient) return;
+    var params = {
+      p_id: state.attemptId,
+      p_violations_count: state.violations.length,
+      p_violations: state.violations.map(function(v){
         return { type:v.type, label:v.label, at:v.at.toISOString() };
-      })
+      }),
+      p_status: (extra && extra.status) || null,
+      p_ended_at: (extra && extra.ended_at) || null
     };
-    if(extra) for(var k in extra) payload[k] = extra[k];
-    if(!supabaseClient){
-      console.warn("[prova] syncAttemptState abortado: supabaseClient ausente.");
-      return;
-    }
-    console.log("[prova] Enviando update para tentativas, id =", JSON.stringify(state.attemptId), "payload =", payload);
-    supabaseClient.from("tentativas").update(payload, { count: "exact" }).eq("id", state.attemptId).then(function(res){
-      if(res && res.error){
-        console.error("[prova] Falha ao salvar tentativa:", res.error);
-      } else if(res && res.count === 0){
-        console.error("[prova] Update executado mas NENHUMA linha foi encontrada com id =", state.attemptId, "— resultado completo:", res);
-      } else {
-        console.log("[prova] Tentativa salva com sucesso. Linhas afetadas:", res && res.count, res);
-      }
+    console.log("[prova] Chamando sincronizar_tentativa:", params);
+    supabaseClient.rpc("sincronizar_tentativa", params).then(function(res){
+      if(res && res.error) console.error("[prova] Falha ao sincronizar tentativa:", res.error);
+      else console.log("[prova] Tentativa sincronizada com sucesso.", res);
     }).catch(function(err){
-      console.error("[prova] Falha ao salvar tentativa (exceção):", err);
+      console.error("[prova] Falha ao sincronizar tentativa (exceção):", err);
     });
   }
 

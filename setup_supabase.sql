@@ -21,24 +21,12 @@ create table public.tentativas (
 
 alter table public.tentativas enable row level security;
 
--- Não existe policy de insert direto: toda criação/retomada de tentativa
--- passa pela função iniciar_ou_retomar_tentativa (definida mais abaixo),
--- que decide se cria uma tentativa nova, retoma uma em andamento, ou
--- bloqueia — sem isso, qualquer um poderia inserir linhas falsas sem
--- passar pela checagem da lista de alunos autorizados.
-
--- Permite que o navegador do aluno atualize a própria linha (para registrar
--- tentativas de fraude e o status final) usando o id devolvido no insert.
--- Sem sistema de login não dá para restringir isso à "linha do próprio aluno"
--- de forma criptograficamente segura — mas o id é um UUID aleatório que só
--- o navegador do aluno recebe, então na prática só ele consegue atualizar
--- a própria linha.
-create policy "Permitir atualização pública de tentativas"
-on public.tentativas
-for update
-to anon
-using (true)
-with check (true);
+-- Não existe nenhuma policy de insert/update direto para "anon": toda
+-- escrita (criar, retomar, registrar tentativa de fraude, finalizar)
+-- passa por funções "security definer" (definidas mais abaixo), que
+-- ignoram RLS por completo e não dependem de a policy "to anon" ser
+-- interpretada corretamente pelo PostgREST — o que se mostrou não
+-- funcionar de forma confiável com o tipo de chave usado neste projeto.
 
 -- ---------------------------------------------------------------------
 -- Lista de alunos autorizados: só quem está aqui consegue iniciar a prova.
@@ -127,6 +115,36 @@ end;
 $$;
 
 grant execute on function public.iniciar_ou_retomar_tentativa(text, text, text) to anon;
+
+-- ---------------------------------------------------------------------
+-- Sincronizar tentativa: grava as tentativas de fraude em tempo real, e
+-- opcionalmente o status final (concluida/bloqueada). p_status e
+-- p_ended_at só sobrescrevem o valor existente quando informados (não
+-- nulos) — assim a mesma função serve tanto para o registro de cada
+-- tentativa de burla quanto para a finalização da prova.
+-- ---------------------------------------------------------------------
+
+create or replace function public.sincronizar_tentativa(
+  p_id uuid,
+  p_violations_count integer,
+  p_violations jsonb,
+  p_status text default null,
+  p_ended_at timestamptz default null
+)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.tentativas
+  set violations_count = p_violations_count,
+      violations = p_violations,
+      status = coalesce(p_status, status),
+      ended_at = coalesce(p_ended_at, ended_at)
+  where id = p_id;
+$$;
+
+grant execute on function public.sincronizar_tentativa(uuid, integer, jsonb, text, timestamptz) to anon;
 
 -- Depois de rodar este script, insira os alunos autorizados, por exemplo:
 -- insert into public.alunos_permitidos (nome_turma_key, nome, turma) values
